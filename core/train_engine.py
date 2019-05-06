@@ -85,13 +85,15 @@ def experiment(exp_cfg, output_dir, device, verbose=True):
     cv_acc = [[] for _ in range(len(split_ds))]
     cv_epoch_loss = [[] for _ in range(len(split_ds))]
     
-    output_path = osp.join(output_dir,str(uuid.uuid4()) + '.pickle')
+    uiid = str(uuid.uuid4())
+    output_path = osp.join(output_dir, uiid + '.pickle')
     ret = {
         'exp_cfg': exp_cfg, 
         'cv_test_acc': cv_acc, 
         'cv_indices_trn_tst': split_i,
         'cv_epoch_loss': cv_epoch_loss, 
-        'start_time': datetime.datetime.now()
+        'start_time': str(datetime.datetime.now()), 
+        'id': uiid
     }
     
     for fold_i, (train_split, test_split) in enumerate(split_ds):      
@@ -174,7 +176,6 @@ def experiment_multi_device(exp_cfgs, output_dir, visible_devices, max_process_o
     assert all((i < torch.cuda.device_count() for i in visible_devices))
 
     num_device = len(visible_devices)
-    max_process_on_device = max_process_on_device
 
     manager = mp.Manager()
     device_counter = manager.dict({t: 0 for t in visible_devices})
@@ -199,4 +200,9 @@ def experiment_multi_device(exp_cfgs, output_dir, visible_devices, max_process_o
                 print(r)
                 print("# experiment configuration:")
                 print(r.exp_cfg)
+
+    ret = [r for r in ret if r is not None]
+    if len(ret) > 0:
+        with open(osp.join(output_dir, 'errors.pickle'), 'bw') as fid:
+            pickle.dump(obj=ret, file=fid)
   
