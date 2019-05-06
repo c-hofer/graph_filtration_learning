@@ -237,11 +237,13 @@ def train_test_split(dataset, seed=0, n_splits=10, verbose=True):
     if verbose:
         print('# num splits: ', len(split_idx))
 
-    ret = []
+    split_ds = []
+    split_i = []
     for train_i, test_i in split_idx:
         train = Subset(dataset=dataset, indices=train_i)
         test  = Subset(dataset=dataset, indices=test_i)
         
-        ret.append((train, test))
+        split_ds.append((train, test))
+        split_i.append((train_i, test_i))
 
-    return ret
+    return split_ds, split_i
