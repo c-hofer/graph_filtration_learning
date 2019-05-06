@@ -16,8 +16,19 @@ class DegreeOnlyFiltration(torch.nn.Module):
         super().__init__()
         
     def forward(self, batch):
-        return batch.node_deg.float()
+        tmp = []
+        for i, j in zip(batch.sample_pos[:-1], batch.sample_pos[1:]):
+            max_deg = batch.node_deg[i:j].max()
+            
+            t = torch.ones(j - i, dtype=torch.float, device=batch.node_deg.device)
+            t = t * max_deg 
+            tmp.append(t)
 
+        max_deg = torch.cat(tmp, dim=0)
+                    
+        normalized_node_deg = batch.node_deg.float() / max_deg
+
+        return normalized_node_deg 
 
 class Filtration(torch.nn.Module):
     def __init__(self, 
@@ -86,13 +97,14 @@ class Filtration(torch.nn.Module):
 
 
 class PershomClassifier(nn.Module):
-    def __init__(self, dataset):
+    def __init__(self, dataset, num_struct_elem=None):
         super().__init__()
+        assert isinstance(num_struct_elem, int) 
         
-        self.ldgm_0     = SLayerRationalHat(50, 2, radius_init=0.1) 
-        self.ldgm_0_ess = SLayerRationalHat(50, 1, radius_init=0.1)
-        self.ldgm_1_ess = SLayerRationalHat(50, 1, radius_init=0.1) 
-        fc_in_feat = 150
+        self.ldgm_0     = SLayerRationalHat(num_struct_elem, 2, radius_init=0.1) 
+        self.ldgm_0_ess = SLayerRationalHat(num_struct_elem, 1, radius_init=0.1)
+        self.ldgm_1_ess = SLayerRationalHat(num_struct_elem, 1, radius_init=0.1) 
+        fc_in_feat = 3*num_struct_elem
         
         self.fc = nn.Sequential(
             nn.Linear(fc_in_feat, 100), 
@@ -117,13 +129,18 @@ class PershomClassifier(nn.Module):
 class PershomModel(nn.Module):
     def __init__(self,
                 dataset,
-                filtration_kwargs=None,                 
+                use_sup_lvlset_filt=None,
+                filtration_kwargs=None,
+                classifier_kwargs=None                 
                 ):
         super().__init__()
+
+        assert isinstance(use_sup_lvlset_filt, bool)
+        self.use_sup_lvlset_filt = use_sup_lvlset_filt
+
         self.fil = Filtration(dataset, **filtration_kwargs) if filtration_kwargs is not None else DegreeOnlyFiltration()       
-        self.cls = PershomClassifier(dataset)
-        self.init_weights()
-        
+        self.cls = PershomClassifier(dataset, **classifier_kwargs)
+        self.init_weights()        
         
     def forward(self, batch):    
         
@@ -135,11 +152,19 @@ class PershomModel(nn.Module):
             ph_input.append((v, [e]))
 
         pers = ph(ph_input)
-            
 
-        h_0 = [x[0][0] for x in pers]
-        h_0_ess = [x[1][0].unsqueeze(1) for x in pers]
-        h_1_ess = [x[1][1].unsqueeze(1) for x in pers]
+        if not self.use_sup_lvlset_filt:
+            h_0 = [x[0][0] for x in pers]
+            h_0_ess = [x[1][0].unsqueeze(1) for x in pers]
+            h_1_ess = [x[1][1].unsqueeze(1) for x in pers]
+
+        else:
+            ph_sup_input = [(-v, e) for v, e in ph_input]
+            pers_sup = ph(ph_sup_input)
+
+            h_0 = [torch.cat([x[0][0], -(y[0][0])], dim=0) for x, y in zip(pers, pers_sup)]
+            h_0_ess = [torch.cat([x[1][0], -(y[1][0])], dim=0).unsqueeze(1) for x, y in zip(pers, pers_sup)]
+            h_1_ess = [torch.cat([x[1][1], -(y[1][1])], dim=0).unsqueeze(1) for x, y in zip(pers, pers_sup)]       
 
         y_hat = self.cls(h_0, h_0_ess, h_1_ess)
 
