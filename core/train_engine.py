@@ -57,7 +57,7 @@ def experiment_task(args):
     assert device is not None
 
     try:
-        experiment(exp_cfg, output_dir, device, verbose=False)
+        experiment(exp_cfg, output_dir, device, verbose=False)        
         device_counter[device_id] -= 1
 
     except Exception as ex:
@@ -190,7 +190,7 @@ def experiment_multi_device(exp_cfgs, output_dir, visible_devices, max_process_o
             ret.append(r)
 
             if r is None: 
-                print("# Finished job {}/{}".format(i, len(task_args)))
+                print("# Finished job {}/{}".format(i + 1, len(task_args)))
 
             else:
                 print("#")

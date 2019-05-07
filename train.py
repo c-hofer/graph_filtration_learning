@@ -23,6 +23,7 @@ if __name__ == "__main__":
 
     with open(args.cfg_file, 'r') as fid:
         exp_cfgs = json.load(fid)
+        
     experiment_multi_device(exp_cfgs, args.output_dir, devices, args.max_process_on_device)
 
 
