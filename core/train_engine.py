@@ -158,11 +158,12 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
             cv_test_acc[fold_i].append(test_acc*100.0)
             cv_epoch_loss[fold_i].append(epoch_loss)
 
+            val_acc = None
             if training_cfg['validation_ratio'] > 0.0:
                 val_acc = evaluate(dl_val, model, device)
                 cv_val_acc[fold_i].append(val_acc*100.0)
 
-            if verbose: print("loss {:.2f} | test_acc {:.2f}".format(epoch_loss, test_acc*100.0))
+            if verbose: print("loss {:.2f} | test_acc {:.2f} | val_acc {:.2f}".format(epoch_loss, test_acc*100.0, val_acc*100.0))
 
         if output_dir is not None:
             with open(output_path, 'bw') as fid:
