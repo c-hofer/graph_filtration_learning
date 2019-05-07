@@ -47,13 +47,11 @@ class Subset(torch.utils.data.Dataset):
         return self.ds[self.indices[idx]]
 
 
-def load_powerfull_gnn_dataset(dataset_name):
-    has_node_features = []
-    assert dataset_name in POWERFUL_GNN_DATASET_NAMES
+def load_powerfull_gnn_dataset_PTC():
+    has_node_features = False
     
     dataset_name = "PTC"
     path = "/home/pma/chofer/repositories/powerful-gnns/dataset/{}/{}.txt".format(dataset_name, dataset_name)
-    has_node_features = dataset_name in has_node_features
 
     with open(path, 'r') as f:
         num_graphs = int(f.readline().strip())
@@ -109,14 +107,16 @@ def load_powerfull_gnn_dataset(dataset_name):
             edge_index = torch.cat([edge_index, tmp], dim=1)
 
             y = torch.tensor([graph_label])
-
-            data.append(
-                torch_geometric.data.Data(
+            
+            d = torch_geometric.data.Data(
                     x=x, 
                     edge_index=edge_index, 
                     y = y
                 )
-            )      
+
+            d.num_nodes = num_nodes
+            
+            data.append(d)      
 
     max_node_lab = max([d.x.max().item() for d in data]) + 1
     eye = torch.eye(max_node_lab, dtype=torch.long)
@@ -206,8 +206,8 @@ def dataset_factory(dataset_name, verbose=True):
         dataset = TUDataset(path, name=dataset_name)
 
     elif dataset_name in POWERFUL_GNN_DATASET_NAMES:
-
-        dataset = load_powerfull_gnn_dataset(dataset_name)
+        if dataset_name == "PTC_PGNN":
+            dataset = load_powerfull_gnn_dataset_PTC()
 
     else:
         raise ValueError("dataset_name not in {}".format(TU_DORTMUND_DATASET_NAMES + POWERFUL_GNN_DATASET_NAMES))

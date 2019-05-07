@@ -28,7 +28,7 @@ ph = pershom.pershom_backend.__C.VertFiltCompCuda__vert_filt_persistence_batch
 from chofer_torchex.nn import SLayerRationalHat
 from collections import defaultdict, Counter
 
-import core.model
+from .model import PershomLearnedFilt, PershomRigidDegreeFilt, GIN
 from .data import dataset_factory, train_test_val_split
 from .utils import my_collate, evaluate
 
@@ -40,17 +40,62 @@ except RuntimeError:
     pass
 
 
+__training_cfg = {
+    'lr': float, 
+    'lr_drop_fact': float, 
+    'num_epochs': int,
+    'epoch_step': int,
+    'batch_size': int,
+    'weight_decay': float,
+    'validation_ratio': float, 
+}
+
+
+__model_cfg_meta = {
+    'model_type': str,
+    'use_super_level_set_filtration': bool, 
+    'use_node_degree': bool, 
+    'use_node_label': bool, 
+    'gin_number': int, 
+    'gin_dimension': int,
+    'gin_mlp_type': str, 
+    'num_struct_elements': int, 
+}
+
+
+__exp_cfg_meta = {
+    'dataset_name': str, 
+    'training': __training_cfg, 
+    'model': __model_cfg_meta
+}
+
+
+__exp_res_meta = {
+    'exp_cfg': __exp_cfg_meta, 
+    'cv_test_acc': list, 
+    'cv_val_acc': list, 
+    'cv_indices_trn_tst_val': list, 
+    'cv_epoch_loss': list,
+    'start_time': list, 
+    'id': str    
+}
+
+
+def model_factory(model_cfg: dict, dataset):
+    str_2_type = {
+        'PershomRigidDegreeFilt': PershomRigidDegreeFilt, 
+        'PershomLearnedFilt': PershomLearnedFilt, 
+        'GIN': GIN
+    } 
+
+    model_type = model_cfg['model_type']
+    Model = str_2_type[model_type]
+    return Model(dataset, **model_cfg)
+
+
 def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None):
-
-    model_id_to_class = {
-        'PershomModel': core.model.PershomModel
-    }      
-    
+   
     training_cfg = exp_cfg['training']
-
-    #TODO: delete
-    if 'validation_ratio' not in training_cfg:
-        training_cfg['validation_ratio'] = 0.0
 
     model_cfg = exp_cfg['model']
 
@@ -85,10 +130,7 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
     
     for fold_i, (train_split, test_split, validation_split) in enumerate(split_ds):          
 
-        model = model_id_to_class[model_cfg['model_type']](
-            dataset, 
-            **model_cfg['model_kwargs']
-        ).to(device)
+        model = model_factory(model_cfg, dataset).to(device)
 
         opt = optim.Adam(
             model.parameters(), 
@@ -167,7 +209,7 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
 
         if output_dir is not None:
             with open(output_path, 'bw') as fid:
-                pickle.dump(file=fid, obj=ret)   
+                pickle.dump(file=fid, obj=ret)          
 
     return ret
 

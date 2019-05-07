@@ -11,8 +11,30 @@ from chofer_torchex import pershom
 ph = pershom.pershom_backend.__C.VertFiltCompCuda__vert_filt_persistence_batch
 
 
+def gin_mlp_factory(gin_mlp_type: str, dim_in: int, dim_out: int):
+    if gin_mlp_type == 'lin':
+        return nn.Linear(dim_in, dim_out)
+
+    elif gin_mlp_type == 'lin_lrelu_lin':
+        return nn.Sequential(
+            nn.Linear(dim_in, dim_in), 
+            nn.LeakyReLU(), 
+            nn.Linear(dim_in, dim_out)
+        )
+
+    elif gin_mlp_type == 'lin_bn_lrelu_lin':
+        return nn.Sequential(
+            nn.Linear(dim_in, dim_in), 
+            nn.BatchNorm1d(dim_in), 
+            nn.LeakyReLU(), 
+            nn.Linear(dim_in, dim_out)
+        )
+    else: 
+        raise ValueError("Unknown gin_mlp_type!")
+
+
 class DegreeOnlyFiltration(torch.nn.Module):
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         super().__init__()
         
     def forward(self, batch):
@@ -30,35 +52,37 @@ class DegreeOnlyFiltration(torch.nn.Module):
 
         return normalized_node_deg 
 
+
 class Filtration(torch.nn.Module):
     def __init__(self, 
             dataset,  
-            use_node_deg=None,
-            use_node_lab=None, 
-            num_gin=1,
-            hidden_dim=32,
-            use_mlp = False
+            use_node_degree=None,
+            use_node_label=None, 
+            gin_number=None,
+            gin_dimension=None,
+            gin_mlp_type = None, 
+            **kwargs
         ):
         super().__init__()
         
-        dim = hidden_dim
+        dim = gin_dimension
         
         max_node_deg = dataset.max_node_deg
         num_node_lab = dataset.num_node_lab
         
-        self.embed_deg = nn.Embedding(max_node_deg+1, dim) if use_node_deg else None
-        self.embed_lab = nn.Embedding(num_node_lab, dim) if use_node_lab else None
+        self.embed_deg = nn.Embedding(max_node_deg+1, dim) if use_node_degree else None
+        self.embed_lab = nn.Embedding(num_node_lab, dim) if use_node_label else None
         
         dim_input = dim*((self.embed_deg is not None) + (self.embed_lab is not None))  
         
-        dims = [dim_input] + (num_gin)*[dim]
+        dims = [dim_input] + (gin_number)*[dim]
         
         self.convs = nn.ModuleList()
         self.bns   = nn.ModuleList()
         self.act   = torch.nn.functional.leaky_relu
         
         for n_1, n_2 in zip(dims[:-1], dims[1:]):            
-            l = nn.Linear(n_1, n_2) if not use_mlp else nn.Sequential(nn.Linear(n_1, n_1), nn.LeakyReLU(), nn.Linear(n_1, n_2))
+            l = gin_mlp_factory(gin_mlp_type, n_1, n_2)    
             self.convs.append(GINConv(l))
             self.bns.append(nn.BatchNorm1d(n_2))             
 
@@ -97,14 +121,18 @@ class Filtration(torch.nn.Module):
 
 
 class PershomClassifier(nn.Module):
-    def __init__(self, dataset, num_struct_elem=None):
+    def __init__(self, 
+            dataset, 
+            num_struct_elements=None
+        ):
+
         super().__init__()
-        assert isinstance(num_struct_elem, int) 
+        assert isinstance(num_struct_elements, int) 
         
-        self.ldgm_0     = SLayerRationalHat(num_struct_elem, 2, radius_init=0.1) 
-        self.ldgm_0_ess = SLayerRationalHat(num_struct_elem, 1, radius_init=0.1)
-        self.ldgm_1_ess = SLayerRationalHat(num_struct_elem, 1, radius_init=0.1) 
-        fc_in_feat = 3*num_struct_elem
+        self.ldgm_0     = SLayerRationalHat(num_struct_elements, 2, radius_init=0.1) 
+        self.ldgm_0_ess = SLayerRationalHat(num_struct_elements, 1, radius_init=0.1)
+        self.ldgm_1_ess = SLayerRationalHat(num_struct_elements, 1, radius_init=0.1) 
+        fc_in_feat = 3*num_struct_elements
         
         self.fc = nn.Sequential(
             nn.Linear(fc_in_feat, 100), 
@@ -124,25 +152,18 @@ class PershomClassifier(nn.Module):
         x = self.fc(x)
         
         return x
-    
-    
-class PershomModel(nn.Module):
-    def __init__(self,
-                dataset,
-                use_sup_lvlset_filt=None,
-                filtration_kwargs=None,
-                classifier_kwargs=None                 
-                ):
+
+
+class PershomBase(nn.Module):
+    def __init__(self):
         super().__init__()
 
-        assert isinstance(use_sup_lvlset_filt, bool)
-        self.use_sup_lvlset_filt = use_sup_lvlset_filt
+        self.use_super_level_set_filtration = None
+        self.fil = None
+        self.cls = None
 
-        self.fil = Filtration(dataset, **filtration_kwargs) if filtration_kwargs is not None else DegreeOnlyFiltration()       
-        self.cls = PershomClassifier(dataset, **classifier_kwargs)
-        self.init_weights()        
-        
     def forward(self, batch):    
+        assert self.use_super_level_set_filtration is not None
         
         node_filt = self.fil(batch) 
        
@@ -153,7 +174,7 @@ class PershomModel(nn.Module):
 
         pers = ph(ph_input)
 
-        if not self.use_sup_lvlset_filt:
+        if not self.use_super_level_set_filtration:
             h_0 = [x[0][0] for x in pers]
             h_0_ess = [x[1][0].unsqueeze(1) for x in pers]
             h_1_ess = [x[1][1].unsqueeze(1) for x in pers]
@@ -168,8 +189,7 @@ class PershomModel(nn.Module):
 
         y_hat = self.cls(h_0, h_0_ess, h_1_ess)
 
-        return y_hat
-    
+        return y_hat    
     
     def init_weights(self):
         def init(m):
@@ -178,4 +198,145 @@ class PershomModel(nn.Module):
                 m.bias.data.fill_(0.01)
                 
         self.apply(init)
+
     
+class PershomLearnedFilt(PershomBase):
+    def __init__(self,
+                dataset,
+                use_super_level_set_filtration: bool=None, 
+                use_node_degree: bool=None, 
+                use_node_label: bool=None, 
+                gin_number: int=None, 
+                gin_dimension: int=None,
+                gin_mlp_type: str=None, 
+                num_struct_elements: int=None,
+                **kwargs,                 
+                ):
+        super().__init__()
+
+
+        self.use_super_level_set_filtration = use_super_level_set_filtration
+
+        self.fil = Filtration(
+            dataset,
+            use_node_degree=use_node_degree,
+            use_node_label=use_node_label, 
+            gin_number=gin_number,
+            gin_dimension=gin_dimension,
+            gin_mlp_type =gin_mlp_type,  
+        )
+
+        self.cls = PershomClassifier(
+            dataset,
+            num_struct_elements=num_struct_elements    
+        )
+
+        self.init_weights()   
+
+
+class PershomRigidDegreeFilt(PershomBase):
+    def __init__(self,
+                dataset,
+                use_super_level_set_filtration: bool=None, 
+                num_struct_elements: int=None,     
+                **kwargs,            
+                ):
+        super().__init__()
+
+
+        self.use_super_level_set_filtration = use_super_level_set_filtration
+
+        self.fil = DegreeOnlyFiltration()
+
+        self.cls = PershomClassifier(
+            dataset,
+            num_struct_elements=num_struct_elements    
+        )
+
+        self.init_weights() 
+
+
+class OneHotEmbedding(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        eye = torch.eye(dim, dtype=torch.float)
+        self.dim = dim 
+
+        self.register_buffer('eye', eye)
+
+    def forward(self, batch):
+        assert batch.dtype == torch.long 
+
+        return self.eye.index_select(0, batch)
+
+
+class GIN(nn.Module):
+    def __init__(self, 
+        dataset, 
+        use_node_degree: bool=None, 
+        use_node_label: bool=None, 
+        gin_number: int=None, 
+        gin_dimension: int=None,
+        gin_mlp_type: str=None, 
+        **kwargs,  
+    ):
+        super().__init__()
+        
+        dim = gin_dimension
+        
+        max_node_deg = dataset.max_node_deg
+        num_node_lab = dataset.num_node_lab
+        
+        self.embed_deg = OneHotEmbedding(max_node_deg+1) if use_node_degree else None
+        self.embed_lab = OneHotEmbedding(num_node_lab) if use_node_label else None
+        
+        dim_input = 0 
+        dim_input += self.embed_deg.dim if use_node_degree else 0 
+        dim_input += self.embed_lab.dim if use_node_label else 0 
+        assert dim_input > 0 
+        
+        dims = [dim_input] + (gin_number)*[dim]
+        self.convs = nn.ModuleList()
+        self.bns   = nn.ModuleList()
+        self.act   = torch.nn.functional.leaky_relu
+        
+        for n_1, n_2 in zip(dims[:-1], dims[1:]):            
+            l = gin_mlp_factory(gin_mlp_type, n_1, n_2)    
+            self.convs.append(GINConv(l, train_eps=True))
+            self.bns.append(nn.BatchNorm1d(n_2))    
+
+
+        self.fc = nn.Sequential(
+            nn.LeakyReLU(), 
+            nn.Dropout(p=0.5), 
+            nn.Linear(dim, dim), 
+            nn.Linear(dim, dataset.num_classes)
+        )             
+
+    def forward(self, batch):
+        
+        node_deg  = batch.node_deg
+        node_lab = batch.node_lab
+
+        edge_index = batch.edge_index
+        
+        tmp = [e(x) for e, x in 
+               zip([self.embed_deg, self.embed_lab], [node_deg, node_lab])
+               if e is not None] 
+        
+        tmp = torch.cat(tmp, dim=1)
+        
+        z = [tmp]        
+        
+        for conv, bn in zip(self.convs, self.bns):
+            x = conv(z[-1], edge_index)
+            x = bn(x)
+            x = self.act(x)
+            z.append(x)
+  
+        # x = torch.cat(z, dim=1)
+        x = z[-1]
+        x = global_add_pool(x, batch.batch)
+        x = self.fc(x)
+        return x
+
