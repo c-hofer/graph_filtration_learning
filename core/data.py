@@ -5,7 +5,7 @@ import torch_geometric.data
 
 from torch_geometric.datasets import TUDataset
 from collections import Counter
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedShuffleSplit
 
 POWERFUL_GNN_DATASET_NAMES =  ["PTC_PGNN"]
 TU_DORTMUND_DATASET_NAMES = [
@@ -34,8 +34,9 @@ class SimpleDataset(torch.utils.data.Dataset):
     
 class Subset(torch.utils.data.Dataset):
     def __init__(self, dataset, indices):
+        assert isinstance(indices, (list, tuple))
         self.ds = dataset
-        self.indices = indices
+        self.indices = tuple(indices)
         
         assert len(indices) <= len(dataset)
         
@@ -228,22 +229,62 @@ def dataset_factory(dataset_name, verbose=True):
     return dataset
 
 
-def train_test_split(dataset, seed=0, n_splits=10, verbose=True):
-    skf = StratifiedKFold(n_splits=n_splits, shuffle = True, random_state = seed)
+def train_test_val_split(
+    dataset, 
+    seed=0, 
+    n_splits=10, 
+    verbose=True, 
+    validation_ratio=0.0):
+
+    skf = StratifiedKFold(
+        n_splits=n_splits, 
+        shuffle = True, 
+        random_state = seed, 
+    )
 
     targets = [x.y.item() for x in dataset]
     split_idx = list(skf.split(np.zeros(len(dataset)), targets))
 
     if verbose:
         print('# num splits: ', len(split_idx))
+        print('# validation ratio: ', validation_ratio)
 
     split_ds = []
     split_i = []
     for train_i, test_i in split_idx:
-        train = Subset(dataset=dataset, indices=train_i)
-        test  = Subset(dataset=dataset, indices=test_i)
+        not_test_i, test_i = train_i.tolist(), test_i.tolist()
+        # train = Subset(dataset=dataset, indices=train_i)
+        # test  = Subset(dataset=dataset, indices=test_i)
+
+        if validation_ratio == 0.0:
+            validation_i = []
+            train_i = not_test_i
+
+        else:
+            skf = StratifiedShuffleSplit(
+                n_splits=1, 
+                random_state = seed, 
+                test_size=validation_ratio
+            )
+
+            targets = [dataset[i].y.item() for i in not_test_i]
+            train_i, validation_i = list(skf.split(np.zeros(len(not_test_i)), targets))[0]
+            train_i, validation_i = train_i.tolist(), validation_i.tolist()  
+
+            # We need the indices w.r.t. the original dataset 
+            # not w.r.t. the current train fold ... 
+            train_i = [not_test_i[j] for j in train_i]
+            validation_i = [not_test_i[j] for j in validation_i]
+            
+        assert len(set(train_i).intersection(set(validation_i))) == 0
         
-        split_ds.append((train, test))
-        split_i.append((train_i, test_i))
+        train = Subset(dataset, train_i)
+        test = Subset(dataset, test_i)
+        validation = Subset(dataset, validation_i)
+
+        assert sum([len(train), len(test), len(validation)]) == len(dataset)
+        
+        split_ds.append((train, test, validation))
+        split_i.append((train_i, test_i, validation_i))
 
     return split_ds, split_i

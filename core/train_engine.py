@@ -29,7 +29,7 @@ from chofer_torchex.nn import SLayerRationalHat
 from collections import defaultdict, Counter
 
 import core.model
-from .data import dataset_factory, train_test_split
+from .data import dataset_factory, train_test_val_split
 from .utils import my_collate, evaluate
 
 
@@ -40,39 +40,18 @@ except RuntimeError:
     pass
 
 
-def experiment_task(args):
-
-    exp_cfg, output_dir, device_counter, lock, max_process_on_device = args
-    
-    with lock:
-        device = None
-        for k, v in device_counter.items():
-            if v < max_process_on_device:
-                device_id = k
-                device = 'cuda:{}'.format(device_id)
-
-                break            
-        device_counter[device_id] += 1
-    
-    assert device is not None
-
-    try:
-        experiment(exp_cfg, output_dir, device, verbose=False)        
-        device_counter[device_id] -= 1
-
-    except Exception as ex:
-        ex.exp_cfg = exp_cfg
-        device_counter[device_id] -= 1
-        raise ex
-
-
-def experiment(exp_cfg, output_dir, device, verbose=True):
+def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None):
 
     model_id_to_class = {
         'PershomModel': core.model.PershomModel
     }      
     
     training_cfg = exp_cfg['training']
+
+    #TODO: delete
+    if 'validation_ratio' not in training_cfg:
+        training_cfg['validation_ratio'] = 0.0
+
     model_cfg = exp_cfg['model']
 
     torch.manual_seed(0)
@@ -80,24 +59,31 @@ def experiment(exp_cfg, output_dir, device, verbose=True):
     torch.cuda.manual_seed_all(0)
 
     dataset = dataset_factory(exp_cfg['dataset_name'], verbose=verbose)
-    split_ds, split_i = train_test_split(dataset, verbose=verbose)
+    split_ds, split_i = train_test_val_split(
+        dataset, 
+        validation_ratio=training_cfg['validation_ratio'], 
+        verbose=verbose)
 
-    cv_acc = [[] for _ in range(len(split_ds))]
+    cv_test_acc = [[] for _ in range(len(split_ds))]
+    cv_val_acc = [[] for _ in range(len(split_ds))]
     cv_epoch_loss = [[] for _ in range(len(split_ds))]
     
     uiid = str(uuid.uuid4())
-    output_path = osp.join(output_dir, uiid + '.pickle')
-    ret = {
-        'exp_cfg': exp_cfg, 
-        'cv_test_acc': cv_acc, 
-        'cv_indices_trn_tst': split_i,
-        'cv_epoch_loss': cv_epoch_loss, 
-        'start_time': str(datetime.datetime.now()), 
-        'id': uiid
-    }
+
+    if output_dir is not None:
+        output_path = osp.join(output_dir, uiid + '.pickle')
+
+    ret = {} if output_cache is None else output_cache
     
-    for fold_i, (train_split, test_split) in enumerate(split_ds):      
-        
+    ret['exp_cfg'] = exp_cfg
+    ret['cv_test_acc'] = cv_test_acc 
+    ret['cv_val_acc']  = cv_val_acc
+    ret['cv_indices_trn_tst_val'] = split_i
+    ret['cv_epoch_loss'] = cv_epoch_loss 
+    ret['start_time'] = str(datetime.datetime.now())
+    ret['id'] = uiid
+    
+    for fold_i, (train_split, test_split, validation_split) in enumerate(split_ds):          
 
         model = model_id_to_class[model_cfg['model_type']](
             dataset, 
@@ -129,6 +115,15 @@ def experiment(exp_cfg, output_dir, device, verbose=True):
             batch_size=64, 
             shuffle=False)
 
+        dl_val = None
+        if training_cfg['validation_ratio'] > 0:
+            dl_val = torch.utils.data.DataLoader(
+                validation_split, 
+                collate_fn=my_collate, 
+                batch_size=64, 
+                shuffle=False
+            )
+
         for epoch_i in range(1, training_cfg['num_epochs']+1):
 
             model.train()
@@ -159,14 +154,48 @@ def experiment(exp_cfg, output_dir, device, verbose=True):
 
             if verbose: print('')
 
-            test_acc = evaluate(dl_test, model, device)
-            if verbose: print("loss {:.2f} | test_acc {:.2f}".format(epoch_loss, test_acc*100.0))
-            
-            cv_acc[fold_i].append(test_acc*100.0)
+            test_acc = evaluate(dl_test, model, device)        
+            cv_test_acc[fold_i].append(test_acc*100.0)
             cv_epoch_loss[fold_i].append(epoch_loss)
+
+            if training_cfg['validation_ratio'] > 0.0:
+                val_acc = evaluate(dl_val, model, device)
+                cv_val_acc[fold_i].append(val_acc*100.0)
+
+            if verbose: print("loss {:.2f} | test_acc {:.2f}".format(epoch_loss, test_acc*100.0))
+
+        if output_dir is not None:
+            with open(output_path, 'bw') as fid:
+                pickle.dump(file=fid, obj=ret)   
+
+    return ret
+
+
+def experiment_task(args):
+
+    exp_cfg, output_dir, device_counter, lock, max_process_on_device = args
     
-        with open(output_path, 'bw') as fid:
-            pickle.dump(file=fid, obj=ret)   
+    with lock:
+        device = None
+        for k, v in device_counter.items():
+            if v < max_process_on_device:
+                device_id = k
+                device = 'cuda:{}'.format(device_id)
+
+                break            
+        device_counter[device_id] += 1
+    
+    assert device is not None
+
+    try:
+        experiment(exp_cfg, device, output_dir=output_dir, verbose=False)        
+        device_counter[device_id] -= 1
+
+    except Exception as ex:
+        ex.exp_cfg = exp_cfg
+        device_counter[device_id] -= 1
+
+        return ex
 
 
 def experiment_multi_device(exp_cfgs, output_dir, visible_devices, max_process_on_device):
