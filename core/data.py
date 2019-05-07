@@ -253,8 +253,6 @@ def train_test_val_split(
     split_i = []
     for train_i, test_i in split_idx:
         not_test_i, test_i = train_i.tolist(), test_i.tolist()
-        # train = Subset(dataset=dataset, indices=train_i)
-        # test  = Subset(dataset=dataset, indices=test_i)
 
         if validation_ratio == 0.0:
             validation_i = []
@@ -283,7 +281,7 @@ def train_test_val_split(
         validation = Subset(dataset, validation_i)
 
         assert sum([len(train), len(test), len(validation)]) == len(dataset)
-        
+
         split_ds.append((train, test, validation))
         split_i.append((train_i, test_i, validation_i))
 
