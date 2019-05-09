@@ -127,6 +127,7 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
     ret['cv_epoch_loss'] = cv_epoch_loss 
     ret['start_time'] = str(datetime.datetime.now())
     ret['id'] = uiid
+    ret['finished_training'] = False
     
     for fold_i, (train_split, test_split, validation_split) in enumerate(split_ds):          
 
@@ -149,13 +150,17 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
             train_split, 
             collate_fn=my_collate, 
             batch_size=training_cfg['batch_size'], 
-            shuffle=True)
+            shuffle=True,
+            # if last batch would have size 1 we have to drop it ... 
+            drop_last=(len(train_split) % training_cfg['batch_size'] == 1)
+        )
 
         dl_test = torch.utils.data.DataLoader(
             test_split , 
             collate_fn=my_collate, 
             batch_size=64, 
-            shuffle=False)
+            shuffle=False
+        )
 
         dl_val = None
         if training_cfg['validation_ratio'] > 0:
@@ -206,10 +211,15 @@ def experiment(exp_cfg, device, output_dir=None, verbose=True, output_cache=None
                 cv_val_acc[fold_i].append(val_acc*100.0)
 
             if verbose: print("loss {:.2f} | test_acc {:.2f} | val_acc {:.2f}".format(epoch_loss, test_acc*100.0, val_acc*100.0))
-
+        
         if output_dir is not None:
             with open(output_path, 'bw') as fid:
-                pickle.dump(file=fid, obj=ret)          
+                pickle.dump(file=fid, obj=ret) 
+
+    ret['finished_training'] = True   
+    if output_dir is not None:
+        with open(output_path, 'bw') as fid:
+            pickle.dump(file=fid, obj=ret)       
 
     return ret
 
