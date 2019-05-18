@@ -33,6 +33,30 @@ def gin_mlp_factory(gin_mlp_type: str, dim_in: int, dim_out: int):
         raise ValueError("Unknown gin_mlp_type!")
 
 
+def ClassifierHead(
+    dataset, 
+    dim_in: int=None, 
+    hidden_dim: int=None, 
+    drop_out: float=None):
+
+    assert (0.0 <= drop_out) and (drop_out < 1.0)
+    assert dim_in is not None
+    assert drop_out is not None
+    assert hidden_dim is not None
+
+    tmp = [
+        nn.Linear(dim_in, hidden_dim), 
+        nn.LeakyReLU(),             
+    ]
+
+    if drop_out > 0:
+        tmp += [nn.Dropout(p=drop_out)]
+
+    tmp += [nn.Linear(hidden_dim, dataset.num_classes)]
+
+    return nn.Sequential(*tmp)
+
+
 class DegreeOnlyFiltration(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -83,7 +107,7 @@ class Filtration(torch.nn.Module):
         
         for n_1, n_2 in zip(dims[:-1], dims[1:]):            
             l = gin_mlp_factory(gin_mlp_type, n_1, n_2)    
-            self.convs.append(GINConv(l))
+            self.convs.append(GINConv(l, train_eps=True))
             self.bns.append(nn.BatchNorm1d(n_2))             
 
         self.fc = nn.Sequential(
@@ -123,7 +147,9 @@ class Filtration(torch.nn.Module):
 class PershomClassifier(nn.Module):
     def __init__(self, 
             dataset, 
-            num_struct_elements=None
+            num_struct_elements=None, 
+            cls_hidden_dimension=None, 
+            drop_out=None, 
         ):
 
         super().__init__()
@@ -134,12 +160,12 @@ class PershomClassifier(nn.Module):
         self.ldgm_1_ess = SLayerRationalHat(num_struct_elements, 1, radius_init=0.1) 
         fc_in_feat = 3*num_struct_elements
         
-        self.fc = nn.Sequential(
-            nn.Linear(fc_in_feat, 100), 
-            nn.BatchNorm1d(100),
-            nn.LeakyReLU(), 
-            nn.Linear(100, dataset.num_classes)
-        )        
+        self.cls_head = ClassifierHead(
+            dataset, 
+            dim_in=fc_in_feat, 
+            hidden_dim=cls_hidden_dimension, 
+            drop_out=drop_out
+        )      
                         
     def forward(self, h_0, h_0_ess, h_1_ess):
         tmp = []
@@ -149,7 +175,7 @@ class PershomClassifier(nn.Module):
         tmp.append(self.ldgm_1_ess(h_1_ess))
             
         x = torch.cat(tmp, dim=1)        
-        x = self.fc(x)
+        x = self.cls_head(x)
         
         return x
 
@@ -210,6 +236,8 @@ class PershomLearnedFilt(PershomBase):
                 gin_dimension: int=None,
                 gin_mlp_type: str=None, 
                 num_struct_elements: int=None,
+                cls_hidden_dimension: int=None,
+                drop_out: float=None,
                 **kwargs,                 
                 ):
         super().__init__()
@@ -228,7 +256,9 @@ class PershomLearnedFilt(PershomBase):
 
         self.cls = PershomClassifier(
             dataset,
-            num_struct_elements=num_struct_elements    
+            num_struct_elements=num_struct_elements,
+            cls_hidden_dimension=cls_hidden_dimension,
+            drop_out=drop_out
         )
 
         self.init_weights()   
@@ -238,7 +268,9 @@ class PershomRigidDegreeFilt(PershomBase):
     def __init__(self,
                 dataset,
                 use_super_level_set_filtration: bool=None, 
-                num_struct_elements: int=None,     
+                num_struct_elements: int=None,
+                cls_hidden_dimension: int=None,   
+                drop_out: float=None,   
                 **kwargs,            
                 ):
         super().__init__()
@@ -250,7 +282,9 @@ class PershomRigidDegreeFilt(PershomBase):
 
         self.cls = PershomClassifier(
             dataset,
-            num_struct_elements=num_struct_elements    
+            num_struct_elements=num_struct_elements, 
+            drop_out=drop_out, 
+            cls_hidden_dimension=cls_hidden_dimension
         )
 
         self.init_weights() 
@@ -260,7 +294,6 @@ class OneHotEmbedding(nn.Module):
     def __init__(self, dim):
         super().__init__()
         eye = torch.eye(dim, dtype=torch.float)
-        self.dim = dim 
 
         self.register_buffer('eye', eye)
 
@@ -268,6 +301,25 @@ class OneHotEmbedding(nn.Module):
         assert batch.dtype == torch.long 
 
         return self.eye.index_select(0, batch)
+    
+    @property
+    def dim(self):
+        return self.eye.size(1)
+
+
+class UniformativeDummyEmbedding(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        b = torch.ones(1, dim, dtype=torch.float)
+        self.register_buffer('ones', b)
+
+    def forward(self, batch):
+        assert batch.dtype == torch.long 
+        return self.ones.expand(batch.size(0), -1)
+    
+    @property
+    def dim(self):
+        return self.ones.size(1)
 
 
 class GIN(nn.Module):
@@ -278,6 +330,10 @@ class GIN(nn.Module):
         gin_number: int=None, 
         gin_dimension: int=None,
         gin_mlp_type: str=None, 
+        cls_hidden_dimension: int=None, 
+        drop_out: float=None,
+        set_node_degree_uninformative: bool=None,
+        pooling_strategy: str=None,    
         **kwargs,  
     ):
         super().__init__()
@@ -287,7 +343,13 @@ class GIN(nn.Module):
         max_node_deg = dataset.max_node_deg
         num_node_lab = dataset.num_node_lab
         
-        self.embed_deg = OneHotEmbedding(max_node_deg+1) if use_node_degree else None
+        if set_node_degree_uninformative and use_node_degree:
+            self.embed_deg = UniformativeDummyEmbedding(gin_dimension)
+        elif use_node_degree:
+            self.embed_deg = OneHotEmbedding(max_node_deg+1)
+        else:
+            self.embed_deg = None
+        
         self.embed_lab = OneHotEmbedding(num_node_lab) if use_node_label else None
         
         dim_input = 0 
@@ -303,15 +365,18 @@ class GIN(nn.Module):
         for n_1, n_2 in zip(dims[:-1], dims[1:]):            
             l = gin_mlp_factory(gin_mlp_type, n_1, n_2)    
             self.convs.append(GINConv(l, train_eps=True))
-            self.bns.append(nn.BatchNorm1d(n_2))    
+            self.bns.append(nn.BatchNorm1d(n_2))   
+        
+        if pooling_strategy == 'sum':
+            self.global_pool_fn = global_add_pool
 
 
-        self.fc = nn.Sequential(
-            nn.LeakyReLU(), 
-            nn.Dropout(p=0.5), 
-            nn.Linear(dim, dim), 
-            nn.Linear(dim, dataset.num_classes)
-        )             
+        self.cls = ClassifierHead(
+            dataset, 
+            dim_in=gin_dimension, 
+            hidden_dim=cls_hidden_dimension, 
+            drop_out=drop_out
+        )            
 
     def forward(self, batch):
         
@@ -336,7 +401,7 @@ class GIN(nn.Module):
   
         # x = torch.cat(z, dim=1)
         x = z[-1]
-        x = global_add_pool(x, batch.batch)
-        x = self.fc(x)
+        x = self.global_pool_fn(x, batch.batch)
+        x = self.cls(x)
         return x
 
