@@ -1,10 +1,11 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch_geometric
 import torch_geometric.nn as geonn
 
 from chofer_torchex.nn import SLayerRationalHat
-from torch_geometric.nn import GINConv, global_add_pool
+from torch_geometric.nn import GINConv, global_add_pool, global_sort_pool
 
 
 from chofer_torchex import pershom
@@ -81,6 +82,7 @@ class Filtration(torch.nn.Module):
     def __init__(self, 
             dataset,  
             use_node_degree=None,
+            set_node_degree_uninformative=None,
             use_node_label=None, 
             gin_number=None,
             gin_dimension=None,
@@ -94,7 +96,13 @@ class Filtration(torch.nn.Module):
         max_node_deg = dataset.max_node_deg
         num_node_lab = dataset.num_node_lab
         
-        self.embed_deg = nn.Embedding(max_node_deg+1, dim) if use_node_degree else None
+        if set_node_degree_uninformative and use_node_degree:
+            self.embed_deg = UniformativeDummyEmbedding(gin_dimension)
+        elif use_node_degree:
+            self.embed_deg = OneHotEmbedding(max_node_deg+1)
+        else:
+            self.embed_deg = None
+
         self.embed_lab = nn.Embedding(num_node_lab, dim) if use_node_label else None
         
         dim_input = dim*((self.embed_deg is not None) + (self.embed_lab is not None))  
@@ -249,6 +257,7 @@ class PershomLearnedFilt(PershomBase):
                 dataset,
                 use_super_level_set_filtration: bool=None, 
                 use_node_degree: bool=None, 
+                set_node_degree_uninformative: bool=None, 
                 use_node_label: bool=None, 
                 gin_number: int=None, 
                 gin_dimension: int=None,
@@ -266,6 +275,7 @@ class PershomLearnedFilt(PershomBase):
         self.fil = Filtration(
             dataset,
             use_node_degree=use_node_degree,
+            set_node_degree_uninformative=set_node_degree_uninformative, 
             use_node_label=use_node_label, 
             gin_number=gin_number,
             gin_dimension=gin_dimension,
@@ -356,6 +366,8 @@ class GIN(nn.Module):
     ):
         super().__init__()
         self.use_as_feature_extractor = False
+        self.pooling_strategy = pooling_strategy
+        self.gin_dimension = gin_dimension
 
         dim = gin_dimension
         
@@ -388,7 +400,16 @@ class GIN(nn.Module):
         
         if pooling_strategy == 'sum':
             self.global_pool_fn = global_add_pool
-
+        elif pooling_strategy == 'sort':
+            self.k = int(np.percentile([d.num_nodes for d in dataset], 10))
+            self.global_pool_fn = lambda x, batch: global_sort_pool(x, batch, self.k)
+            self.sort_pool_conf = nn.Conv1d(
+                in_channels=gin_dimension, 
+                out_channels=gin_dimension, 
+                kernel_size=self.k
+            )
+        else:
+            raise ValueError
 
         self.cls = ClassifierHead(
             dataset, 
@@ -425,6 +446,11 @@ class GIN(nn.Module):
         # x = torch.cat(z, dim=1)
         x = z[-1]
         x = self.global_pool_fn(x, batch.batch)
+
+        if self.pooling_strategy == 'sort':
+            x = x.view(x.size(0), self.gin_dimension, self.k)
+            x = self.sort_pool_conf(x)
+            x = x.squeeze()
 
         if not self.use_as_feature_extractor:
             x = self.cls(x)
