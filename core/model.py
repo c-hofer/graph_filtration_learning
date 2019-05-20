@@ -154,6 +154,7 @@ class PershomClassifier(nn.Module):
 
         super().__init__()
         assert isinstance(num_struct_elements, int) 
+        self.use_as_feature_extractor = False
         
         self.ldgm_0     = SLayerRationalHat(num_struct_elements, 2, radius_init=0.1) 
         self.ldgm_0_ess = SLayerRationalHat(num_struct_elements, 1, radius_init=0.1)
@@ -174,8 +175,10 @@ class PershomClassifier(nn.Module):
         tmp.append(self.ldgm_0_ess(h_0_ess))            
         tmp.append(self.ldgm_1_ess(h_1_ess))
             
-        x = torch.cat(tmp, dim=1)        
-        x = self.cls_head(x)
+        x = torch.cat(tmp, dim=1)
+
+        if not self.use_as_feature_extractor:        
+            x = self.cls_head(x)
         
         return x
 
@@ -185,6 +188,7 @@ class PershomBase(nn.Module):
         super().__init__()
 
         self.use_super_level_set_filtration = None
+        self.use_as_feature_extractor = False
         self.fil = None
         self.cls = None
 
@@ -215,7 +219,21 @@ class PershomBase(nn.Module):
 
         y_hat = self.cls(h_0, h_0_ess, h_1_ess)
 
-        return y_hat    
+        return y_hat  
+
+    @property
+    def feature_dimension(self):
+        return self.cls.cls_head[0].in_features  
+
+    @property
+    def use_as_feature_extractor(self):
+        return self.use_as_feature_extractor
+
+    @use_as_feature_extractor.setter
+    def use_as_feature_extractor(self, val):
+        if hasattr(self, 'cls'):
+            self.cls.use_as_feature_extractor = val
+
     
     def init_weights(self):
         def init(m):
@@ -337,7 +355,8 @@ class GIN(nn.Module):
         **kwargs,  
     ):
         super().__init__()
-        
+        self.use_as_feature_extractor = False
+
         dim = gin_dimension
         
         max_node_deg = dataset.max_node_deg
@@ -376,7 +395,11 @@ class GIN(nn.Module):
             dim_in=gin_dimension, 
             hidden_dim=cls_hidden_dimension, 
             drop_out=drop_out
-        )            
+        )         
+   
+    @property
+    def feature_dimension(self):
+        return self.cls.cls_head[0].in_features  
 
     def forward(self, batch):
         
@@ -402,6 +425,9 @@ class GIN(nn.Module):
         # x = torch.cat(z, dim=1)
         x = z[-1]
         x = self.global_pool_fn(x, batch.batch)
-        x = self.cls(x)
+
+        if not self.use_as_feature_extractor:
+            x = self.cls(x)
+        
         return x
 
