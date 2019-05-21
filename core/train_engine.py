@@ -28,7 +28,7 @@ ph = pershom.pershom_backend.__C.VertFiltCompCuda__vert_filt_persistence_batch
 from chofer_torchex.nn import SLayerRationalHat
 from collections import defaultdict, Counter
 
-from .model import PershomLearnedFilt, PershomRigidDegreeFilt, GIN
+from .model import PershomLearnedFilt, PershomRigidDegreeFilt, GIN, SimpleNNBaseline
 from .data import dataset_factory, train_test_val_split
 from .utils import my_collate, evaluate
 
@@ -90,7 +90,8 @@ def model_factory(model_cfg: dict, dataset):
     str_2_type = {
         'PershomRigidDegreeFilt': PershomRigidDegreeFilt,
         'PershomLearnedFilt': PershomLearnedFilt,
-        'GIN': GIN
+        'GIN': GIN, 
+        'SimpleNNBaseline': SimpleNNBaseline
     }
 
     model_type = model_cfg['model_type']

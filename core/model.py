@@ -460,3 +460,88 @@ class GIN(nn.Module):
         
         return x
 
+
+class SimpleNNBaseline(nn.Module):
+    def __init__(self, 
+        dataset, 
+        use_node_degree: bool=None, 
+        use_node_label: bool=None, 
+        set_node_degree_uninformative: bool=None,
+        gin_dimension: int=None,
+        gin_mlp_type: str=None, 
+        cls_hidden_dimension: int=None, 
+        drop_out: float=None,
+        pooling_strategy: str=None,    
+        **kwargs,  
+    ):
+        super().__init__()
+        self.use_as_feature_extractor = False
+        self.pooling_strategy = pooling_strategy
+        self.gin_dimension = gin_dimension
+
+        dim = gin_dimension
+        
+        max_node_deg = dataset.max_node_deg
+        num_node_lab = dataset.num_node_lab
+        
+        if set_node_degree_uninformative and use_node_degree:
+            self.embed_deg = UniformativeDummyEmbedding(gin_dimension)
+        elif use_node_degree:
+            self.embed_deg = OneHotEmbedding(max_node_deg+1)
+        else:
+            self.embed_deg = None
+        
+        self.embed_lab = OneHotEmbedding(num_node_lab) if use_node_label else None
+        
+        dim_input = 0 
+        dim_input += self.embed_deg.dim if use_node_degree else 0 
+        dim_input += self.embed_lab.dim if use_node_label else 0 
+        assert dim_input > 0
+        
+        self.mlp = gin_mlp_factory(gin_mlp_type, dim_input, dim) 
+        
+        if pooling_strategy == 'sum':
+            self.global_pool_fn = global_add_pool
+        elif pooling_strategy == 'sort':
+            self.k = int(np.percentile([d.num_nodes for d in dataset], 10))
+            self.global_pool_fn = functools.partial(global_sort_pool, k=self.k)
+            self.sort_pool_nn = nn.Linear(self.k * gin_dimension, gin_dimension)
+        else:
+            raise ValueError
+
+        self.cls = ClassifierHead(
+            dataset, 
+            dim_in=gin_dimension, 
+            hidden_dim=cls_hidden_dimension, 
+            drop_out=drop_out
+        )         
+   
+    @property
+    def feature_dimension(self):
+        return self.cls.cls_head[0].in_features  
+
+    def forward(self, batch):
+        
+        node_deg  = batch.node_deg
+        node_lab = batch.node_lab
+
+        edge_index = batch.edge_index
+        
+        tmp = [e(x) for e, x in 
+               zip([self.embed_deg, self.embed_lab], [node_deg, node_lab])
+               if e is not None] 
+        
+        x = torch.cat(tmp, dim=1)    
+        
+        x = self.mlp(x) 
+        x = self.global_pool_fn(x, batch.batch)
+
+        if self.pooling_strategy == 'sort':
+            x = self.sort_pool_nn(x)
+            x = x.squeeze()
+
+        if not self.use_as_feature_extractor:
+            x = self.cls(x)
+        
+        return x
+
