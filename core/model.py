@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch_geometric
 import torch_geometric.nn as geonn
 
+import functools
+
 from chofer_torchex.nn import SLayerRationalHat
 from torch_geometric.nn import GINConv, global_add_pool, global_sort_pool
 
@@ -99,7 +101,7 @@ class Filtration(torch.nn.Module):
         if set_node_degree_uninformative and use_node_degree:
             self.embed_deg = UniformativeDummyEmbedding(gin_dimension)
         elif use_node_degree:
-            self.embed_deg = OneHotEmbedding(max_node_deg+1)
+            self.embed_deg = nn.Embedding(max_node_deg+1, dim)
         else:
             self.embed_deg = None
 
@@ -402,12 +404,13 @@ class GIN(nn.Module):
             self.global_pool_fn = global_add_pool
         elif pooling_strategy == 'sort':
             self.k = int(np.percentile([d.num_nodes for d in dataset], 10))
-            self.global_pool_fn = lambda x, batch: global_sort_pool(x, batch, self.k)
-            self.sort_pool_conf = nn.Conv1d(
-                in_channels=gin_dimension, 
-                out_channels=gin_dimension, 
-                kernel_size=self.k
-            )
+            self.global_pool_fn = functools.partial(global_sort_pool, k=self.k)
+            self.sort_pool_nn = nn.Linear(self.k * gin_dimension, gin_dimension)
+            #nn.Conv1d(
+            #    in_channels=gin_dimension, 
+            #    out_channels=gin_dimension, 
+            #    kernel_size=self.k
+            #)
         else:
             raise ValueError
 
@@ -448,8 +451,8 @@ class GIN(nn.Module):
         x = self.global_pool_fn(x, batch.batch)
 
         if self.pooling_strategy == 'sort':
-            x = x.view(x.size(0), self.gin_dimension, self.k)
-            x = self.sort_pool_conf(x)
+            #x = x.view(x.size(0), self.gin_dimension * self.k)
+            x = self.sort_pool_nn(x)
             x = x.squeeze()
 
         if not self.use_as_feature_extractor:
