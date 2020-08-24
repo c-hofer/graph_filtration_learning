@@ -5,6 +5,9 @@ from core.train_engine import experiment_multi_device
 
 
 if __name__ == "__main__":
+    import torch.multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
+
 
     parser = argparse.ArgumentParser(description='')
 

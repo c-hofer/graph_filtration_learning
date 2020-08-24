@@ -34,10 +34,10 @@ from .utils import my_collate, evaluate
 
 
 import torch.multiprocessing as mp
-try:
-     mp.set_start_method('spawn')
-except RuntimeError:
-    pass
+# try:
+#      mp.set_start_method('spawn')
+# except RuntimeError:
+#     pass
 
 
 __training_cfg = {

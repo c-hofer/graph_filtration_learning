@@ -202,7 +202,7 @@ def enhance_TUDataset(ds):
 def dataset_factory(dataset_name, verbose=True):
     if dataset_name in TU_DORTMUND_DATASET_NAMES:
 
-        path = '/home/pma/chofer/repositories/pytorch_geometric/data/{}/'.format(dataset_name)
+        path = 'data/{}/'.format(dataset_name)
         dataset = TUDataset(path, name=dataset_name)
 
     elif dataset_name in POWERFUL_GNN_DATASET_NAMES:
