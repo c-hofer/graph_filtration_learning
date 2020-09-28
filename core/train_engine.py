@@ -14,7 +14,7 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 
-import chofer_torchex.pershom as pershom
+import torchph.pershom as pershom
 
 from torch.nn import Sequential, Linear, ReLU
 from torch.optim.lr_scheduler import MultiStepLR
@@ -22,10 +22,10 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch_geometric.datasets import TUDataset
 from torch_geometric.nn import GINConv, global_add_pool
 
-from chofer_torchex import pershom
+from torchph import pershom
 ph = pershom.pershom_backend.__C.VertFiltCompCuda__vert_filt_persistence_batch
 
-from chofer_torchex.nn import SLayerRationalHat
+from torchph.nn import SLayerRationalHat
 from collections import defaultdict, Counter
 
 from .model import PershomLearnedFilt, PershomRigidDegreeFilt, GIN, SimpleNNBaseline
@@ -34,10 +34,10 @@ from .utils import my_collate, evaluate
 
 
 import torch.multiprocessing as mp
-try:
-     mp.set_start_method('spawn')
-except RuntimeError:
-    pass
+# try:
+#      mp.set_start_method('spawn')
+# except RuntimeError:
+#     pass
 
 
 __training_cfg = {

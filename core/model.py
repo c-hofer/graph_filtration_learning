@@ -6,11 +6,11 @@ import torch_geometric.nn as geonn
 
 import functools
 
-from chofer_torchex.nn import SLayerRationalHat
+from torchph.nn import SLayerRationalHat
 from torch_geometric.nn import GINConv, global_add_pool, global_sort_pool
 
 
-from chofer_torchex import pershom
+from torchph import pershom
 ph = pershom.pershom_backend.__C.VertFiltCompCuda__vert_filt_persistence_batch
 
 

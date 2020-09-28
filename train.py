@@ -1,10 +1,12 @@
 import json
 import argparse
+import torch.multiprocessing as mp
 
 from core.train_engine import experiment_multi_device
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
 
     parser = argparse.ArgumentParser(description='')
 
