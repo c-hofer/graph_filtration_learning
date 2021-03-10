@@ -39,11 +39,11 @@ In the following `<root_dir>` will be the directory in which you have chosen to 
 
 2. Use the `train.py` script to run the experiments, e.g., 
     ```
-    python train.py --cfg_file <my_cfg.json> --output_dir results --devices 0,1 --max_process_on_device 2 
+    python train.py --cfg_file <my_cfg.json> --output_dir <results/dir/path> --devices 0,1 --max_process_on_device 2 
     ```
     to use cuda device 0 and 1 with at most 2 experiments on each. 
 
-    Each experiment gets a unique id and its output is written to `results` as a pickle file. Additionally for each CV run the corresponding trained model is dumped. 
+    Each experiment gets a unique id and its output is written to `<results/dir/path>` as a pickle file. Additionally for each CV run the corresponding trained model is dumped. 
 
 3. The notebook `results.ipynb` contains some code to browse the results. 
 
